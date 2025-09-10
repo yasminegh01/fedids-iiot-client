@@ -1,8 +1,9 @@
 
 flwr==1.8.0
-tensorflow==2.16.1  # <<< LA MODIFICATION CRUCIALE EST ICI
+tensorflow==2.16.1  # <<< C'EST LA VERSION QUI VA RÉSOUDRE LE CONFLIT
 requests
 numpy==1.26.4
 pandas
 scikit-learn
 simpleaudio
+
