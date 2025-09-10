@@ -1,7 +1,5 @@
-# iiot_client/requirements.txt (VERSION COMPATIBLE AVEC PYTHON 3.13)
-
-flwr==1.20.0         # <<< On met à jour Flower
-tensorflow==2.20.0   # <<< On utilise la version que pip trouve
+flwr==1.22.0        # ou plus récent, supporte protobuf>=5
+tensorflow==2.20.0
 requests
 numpy==1.26.4
 pandas
