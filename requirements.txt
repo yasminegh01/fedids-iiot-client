@@ -1,16 +1,8 @@
-# backend/requirements.txt
-flwr[simulation]
+
+flwr
 tensorflow
+requests
 numpy
 pandas
 scikit-learn
-fastapi
-uvicorn[standard]
-SQLAlchemy
-passlib[bcrypt]
-python-jose[cryptography]
-python-dotenv
-requests
-apscheduler
-matplotlib
-seaborn
+simpleaudio
