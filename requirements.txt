@@ -1,8 +1,7 @@
-# iiot_client/requirements.txt (VERSION STABLE ET TESTÉE)
+# iiot_client/requirements.txt (VERSION STABLE ET COMPATIBLE)
 
-# On spécifie des versions qui sont connues pour bien fonctionner ensemble
 flwr==1.8.0
-tensorflow==2.15.0
+tensorflow==2.16.1  
 requests
 numpy==1.26.4
 pandas
