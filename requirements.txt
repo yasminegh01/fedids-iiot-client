@@ -1,5 +1,5 @@
-flwr==1.22.0        # ou plus récent, supporte protobuf>=5
-tensorflow==2.20.0
+flwr==1.20.0
+tensorflow==2.15.0
 requests
 numpy==1.26.4
 pandas
