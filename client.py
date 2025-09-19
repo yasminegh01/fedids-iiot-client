@@ -57,8 +57,30 @@ def generate_local_data(num_samples=1000):
 
 # --- Client Flower ---
 class CnnLstmClient(fl.client.NumPyClient):
-    # ... (cette classe est correcte)
-    pass
+    # === LA CORRECTION EST ICI ===
+    # On s'assure que le constructeur __init__ est bien défini
+    # et qu'il accepte tous les arguments nécessaires.
+    def __init__(self, model, x_train, y_train, x_val, y_val):
+        self.model = model
+        self.x_train, self.y_train = x_train, y_train
+        self.x_val, self.y_val = x_val, y_val
+
+    def get_parameters(self, config):
+        return self.model.get_weights()
+
+    def fit(self, parameters, config):
+        self.model.set_weights(parameters)
+        # On re-compile le modèle à chaque fit pour réinitialiser l'état de l'optimiseur
+        self.model.compile("adam", "sparse_categorical_crossentropy", metrics=["accuracy"])
+        self.model.fit(self.x_train, self.y_train, epochs=2, batch_size=32, verbose=0)
+        print("✅ Local training round finished.")
+        return self.model.get_weights(), len(self.x_train), {}
+
+    def evaluate(self, parameters, config):
+        self.model.set_weights(parameters)
+        self.model.compile("adam", "sparse_categorical_crossentropy", metrics=["accuracy"])
+        loss, accuracy = self.model.evaluate(self.x_val, self.y_val, verbose=0)
+        return float(loss), len(self.x_val), {"accuracy": float(accuracy)}
 def main():
     parser = argparse.ArgumentParser(description="FedIds IIoT Client")
     parser.add_argument("--client-id", type=int, required=True)
