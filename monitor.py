@@ -1,13 +1,15 @@
-# iiot_client/monitor.py (VERSION AVEC SIMULATION GÉOGRAPHIQUE)
 
 import requests
 import time
 import random
 import configparser
 import os
-import simpleaudio as sa # Pour l'alarme sonore
+import simpleaudio as sa
+from typing import Optional
+import argparse
 
-API_URL = "http://192.168.1.12:8000" # <<< METTEZ VOTRE IP ICI
+# --- Configuration ---
+API_URL = "http://127.0.0.1:8000" # Sera mis à jour par l'argument --server-ip
 ATTACK_TYPES = ['Backdoor','DDoS_ICMP','DDoS_TCP','MITM','Port_Scanning','Ransomware']
 
 # === LA NOUVELLE LOGIQUE EST ICI ===
@@ -108,70 +110,93 @@ REAL_WORLD_IPS = [
     "201.132.108.1",  # Telmex (Mexico)
     "200.11.52.202",  # CNT (Ecuador)
 ]
-
-
-def get_device_api_key():
+# --- Fonctions Utilitaires ---
+def get_device_api_key(config_file: str) -> Optional[str]:
     config = configparser.ConfigParser()
-    config.read('config.ini')
+    if not os.path.exists(config_file): return None
+    config.read(config_file)
     return config.get('device', 'api_key', fallback=None)
 
-
+# --- Classe Principale du Moniteur ---
 class Monitor:
-    def __init__(self, api_key):
+    def __init__(self, api_key: str):
         self.api_key = api_key
         self.prevention_enabled = False
         self.last_settings_check = 0
 
     def check_settings(self):
-        if not self.api_key or (time.time() - self.last_settings_check < 60): return
+        if not self.api_key or (time.time() - self.last_settings_check < 60):
+            return
         print("\n[Monitor] Checking for new prevention settings...")
         self.last_settings_check = time.time()
         try:
-            r = requests.get(f"{API_URL}/api/devices/{self.api_key}/settings", timeout=5)
-            if r.status_code == 200:
-                new_status = r.json().get("prevention_enabled", False)
+            response = requests.get(f"{API_URL}/api/devices/{self.api_key}/settings", timeout=5)
+            if response.status_code == 200:
+                new_status = response.json().get("prevention_enabled", False)
                 if new_status != self.prevention_enabled:
                     self.prevention_enabled = new_status
                     print(f"  > ✅ Prevention Status is now: {'ENABLED' if self.prevention_enabled else 'DISABLED'}")
-        except: print("  > ⚠️ Warning: Could not fetch settings from backend.")
+        except requests.exceptions.RequestException:
+            print("  > ⚠️ Warning: Could not fetch settings from the backend server.")
 
     def run_prevention_action(self, ip: str, attack: str):
         print(f"   🔥 PREMIUM PREVENTION ACTION on {ip} 🔥")
-        # ... (votre logique ntfy.sh ici)
         try:
             wave_obj = sa.WaveObject.from_wave_file("siren_alarm.wav")
             wave_obj.play()
             print("      - ACTION: Sound alarm triggered on device.")
-        except Exception: pass
+        except Exception:
+            print("      - SKIPPED: Could not play 'siren_alarm.wav'. Make sure the file exists.")
 
     def loop(self):
-        print("\n--- Monitoring network traffic (Simulated)... ---")
+        print("\n--- Monitoring network traffic (Simulated)... Press Ctrl+C to stop. ---")
         while True:
             try:
-                self.check_settings() # <<< ON ACTIVE CETTE LIGNE
+                self.check_settings()
                 
-                if random.random() > 0.6:
+                if random.random() > 0.6: # 40% de chance de détecter une attaque
                     attack_type = random.choice(ATTACK_TYPES)
                     confidence = round(random.uniform(0.85, 1.0), 2)
                     source_ip = random.choice(REAL_WORLD_IPS)
                     
                     print(f"🛑 ATTACK DETECTED: '{attack_type}' from {source_ip} (Confidence: {confidence:.0%})")
                     
-                    # Si la prévention est active ET que la confiance est très élevée
                     if self.prevention_enabled and confidence > 0.95:
                         self.run_prevention_action(source_ip, attack_type)
                     
-                    requests.post(f"{API_URL}/api/attacks/report", json={...})
-                
-                time.sleep(random.randint(8, 15)) # On ralentit un peu les attaques
-            except KeyboardInterrupt: break
-        print("\nMonitor shut down.")
+                    report_payload = {
+                        "source_ip": source_ip,
+                        "attack_type": attack_type,
+                        "confidence": float(confidence)
+                    }
+                    requests.post(f"{API_URL}/api/attacks/report", json=report_payload, timeout=5)
+                    print("   -> Alert successfully reported to the backend.")
+                    print("-" * 40)
 
+                time.sleep(random.randint(8, 15))
+
+            except KeyboardInterrupt:
+                break
+            except Exception as e:
+                print(f"\nAn unexpected error occurred in the monitor loop: {e}")
+                time.sleep(15)
+        print("\nMonitor has been shut down.")
+
+# --- Fonction Principale ---
 def main():
-    api_key = get_device_api_key()
+    parser = argparse.ArgumentParser(description="FedIds IIoT Monitor")
+    parser.add_argument("--config", type=str, default="config.ini", help="Path to config file")
+    parser.add_argument("--server-ip", type=str, default="127.0.0.1", help="IP address of the main server")
+    args = parser.parse_args()
+
+    global API_URL
+    API_URL = f"http://{args.server_ip}:8000"
+
+    api_key = get_device_api_key(args.config)
     if not api_key:
-        print("API Key not found in config.ini")
+        print(f"❌ CRITICAL: API Key not found in '{args.config}'. Exiting.")
         return
+        
     Monitor(api_key).loop()
 
 if __name__ == "__main__":
