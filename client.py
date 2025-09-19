@@ -6,6 +6,7 @@ import numpy as np
 import argparse, os, configparser, requests, time, threading, random # <<< 'random' EST MAINTENANT IMPORTÉ
 from typing import Optional
 from sklearn.model_selection import train_test_split
+from model_definition import create_model 
 
 # --- Configuration Globale ---
 API_URL = "http://127.0.0.1:8000" 
@@ -58,8 +59,6 @@ def generate_local_data(num_samples=1000):
 class CnnLstmClient(fl.client.NumPyClient):
     # ... (cette classe est correcte)
     pass
-
-# --- Fonction Principale ---
 def main():
     parser = argparse.ArgumentParser(description="FedIds IIoT Client")
     parser.add_argument("--client-id", type=int, required=True)
@@ -67,24 +66,48 @@ def main():
     parser.add_argument("--server-ip", type=str, default="127.0.0.1")
     args = parser.parse_args()
 
+    print(f"--- Starting Client {args.client_id} (Config: {args.config}) ---")
+
     global API_URL, FLOWER_SERVER_ADDRESS
     API_URL = f"http://{args.server_ip}:8000"
     FLOWER_SERVER_ADDRESS = f"{args.server_ip}:8080"
 
     api_key = get_device_api_key(args.config)
-    if not api_key: return
+    if not api_key:
+        print(f"❌ FATAL: API Key not found in '{args.config}'. Exiting.")
+        return
 
-    # Démarrer le thread d'arrière-plan
+    # Démarrer le thread d'arrière-plan pour le heartbeat et les alertes
     stop_event = threading.Event()
     bg_thread = threading.Thread(target=background_tasks, args=(api_key, stop_event), daemon=True)
     bg_thread.start()
+    print("✅ Background tasks (heartbeat, attack simulation) started.")
 
-    # Générer les données et charger le modèle
+    # Générer les données d'entraînement locales
     data = generate_local_data()
-    if not data: return
+    if not data:
+        print("❌ Data generation failed. Exiting.")
+        return
     x_train, x_val, y_train, y_val = data
-    try: model = tf.keras.models.load_model('global_model.h5')
-    except Exception as e: print(f"❌ Failed to load model: {e}"); return
+    
+    # === LA CORRECTION EST ICI ===
+    try:
+        # 1. On crée une instance vide du modèle à partir du code partagé
+        print("Creating model architecture from definition...")
+        model = create_model() # Assurez-vous que `from model_definition import create_model` est en haut du fichier
+        
+        # 2. On charge UNIQUEMENT les poids dans cette structure
+        print("Loading weights into model...")
+        model.load_weights('global_model.weights.h5')
+    
+        print("✅ Model created and weights loaded successfully.")
+    except Exception as e:
+        print(f"❌ Failed to create/load model: {e}")
+        # Arrêter le thread d'arrière-plan avant de quitter
+        stop_event.set()
+        bg_thread.join(1)
+        return
+    # === FIN DE LA CORRECTION ===
 
     # Démarrer le client Flower (qui est bloquant)
     client = CnnLstmClient(model, x_train, y_train, x_val, y_val)
