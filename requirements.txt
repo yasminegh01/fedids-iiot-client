@@ -1,9 +1,10 @@
-# iiot_client/requirements.txt (VERSION STABLE ET COMPATIBLE)
+# iiot_client/requirements.txt (VERSION FINALE ET COMPLÈTE)
 
-flwr==1.8.0
-tensorflow==2.16.1  
+flwr==1.7.0
+tensorflow==2.15.0
 requests
 numpy==1.26.4
 pandas
 scikit-learn
-simpleaudio
+simpleaudio  # <<< ASSUREZ-VOUS QUE CETTE LIGNE EST PRÉSENTE
+httpx 

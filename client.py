@@ -19,7 +19,7 @@ FLOWER_SERVER_ADDRESS = "127.0.0.1:8080"
 # Configuration du modèle et des données simulées
 TIME_STEPS = 20
 NUM_FEATURES = 7
-NUM_CLASSES = 15 # Le nombre total de types d'attaques + 'Normal'
+NUM_CLASSES = 15 # Le nombre total de typeas d'attaques + 'Normal'
 
 # --- Fonctions Utilitaires ---
 
