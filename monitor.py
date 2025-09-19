@@ -165,10 +165,10 @@ class Monitor:
                         self.run_prevention_action(source_ip, attack_type)
                     
                     report_payload = {
-                        "source_ip": source_ip,
-                        "attack_type": attack_type,
-                        "confidence": float(confidence)
-                    }
+        "source_ip": str(source_ip), # Assurer que c'est une chaîne
+        "attack_type": str(attack_type), # Assurer que c'est une chaîne
+        "confidence": float(confidence) # Assurer que c'est un float
+    }
                     requests.post(f"{API_URL}/api/attacks/report", json=report_payload, timeout=5)
                     print("   -> Alert successfully reported to the backend.")
                     print("-" * 40)
