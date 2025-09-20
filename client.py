@@ -161,15 +161,16 @@ class CnnLstmClient(fl.client.NumPyClient):
     def get_parameters(self, config):
         return self.model.get_weights()
 
-    def fit(self, parameters, config):
+   # === LA CORRECTION EST ICI ===
+    def fit(self, parameters, config): # On ajoute 'config'
         self.model.set_weights(parameters)
-        # On re-compile le modèle à chaque fit pour réinitialiser l'état de l'optimiseur
         self.model.compile("adam", "sparse_categorical_crossentropy", metrics=["accuracy"])
         self.model.fit(self.x_train, self.y_train, epochs=2, batch_size=32, verbose=0)
         print("✅ Local training round finished.")
         return self.model.get_weights(), len(self.x_train), {}
 
-    def evaluate(self, parameters, config):
+    # === ET ICI AUSSI ===
+    def evaluate(self, parameters, config): # On ajoute 'config'
         self.model.set_weights(parameters)
         self.model.compile("adam", "sparse_categorical_crossentropy", metrics=["accuracy"])
         loss, accuracy = self.model.evaluate(self.x_val, self.y_val, verbose=0)
