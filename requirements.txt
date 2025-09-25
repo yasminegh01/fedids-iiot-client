@@ -2,8 +2,5 @@ flwr==1.7.0
 tensorflow==2.15.0
 requests
 numpy==1.26.4
-pandas
 scikit-learn
-simpleaudio  # <<< ASSUREZ-VOUS QUE CETTE LIGNE EST PRÉSENTE
-httpx 
-geoip2
+simpleaudio
