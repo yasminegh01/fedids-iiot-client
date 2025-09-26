@@ -84,7 +84,11 @@ class CnnLstmClient(fl.client.NumPyClient):
     def fit(self, parameters, config):
         try:
             self.model.set_weights(parameters)
-            self.model.compile(optimizer="adam", loss="sparse_categorical_crossentropy", metrics=["accuracy"])
+            self.model.compile(
+                optimizer="adam",
+                loss="sparse_categorical_crossentropy",
+                metrics=["accuracy"]
+            )
             self.model.fit(self.x_train, self.y_train, epochs=2, batch_size=32, verbose=1)
             print("✅ Local training round finished.")
             return self.model.get_weights(), len(self.x_train), {}
@@ -96,16 +100,17 @@ class CnnLstmClient(fl.client.NumPyClient):
         try:
             self.model.set_weights(parameters)
             self.model.compile(
-            optimizer="adam",
-            loss="sparse_categorical_crossentropy",
-            metrics=["accuracy"]
-         )
+                optimizer="adam",
+                loss="sparse_categorical_crossentropy",
+                metrics=["accuracy"]
+            )
             loss, accuracy = self.model.evaluate(self.x_val, self.y_val, verbose=0)
             print(f"📊 Evaluation result — Loss: {loss:.4f}, Accuracy: {accuracy:.4f}")
             return float(loss), len(self.x_val), {"accuracy": float(accuracy)}
         except Exception as e:
             print(f"❌ Error in evaluate(): {e}")
-        return 0.0, 0, {"accuracy": 0.0}
+            return 0.0, 0, {"accuracy": 0.0}
+
 
 # --- Fonction Principale ---
 def main():
