@@ -27,7 +27,8 @@ def background_tasks(api_key: str, stop_event: threading.Event):
         try:
             requests.post(f"{API_URL}/api/devices/heartbeat", json={"api_key": api_key}, timeout=5)
             print(f"[Background] Heartbeat sent for ...{api_key[-4:]}.")
-        except: pass
+        except:
+            pass
 
         # Simulation d'attaque (30% de chance)
         if random.random() > 0.7:
@@ -39,7 +40,8 @@ def background_tasks(api_key: str, stop_event: threading.Event):
             try:
                 requests.post(f"{API_URL}/api/attacks/report", json=attack, timeout=5)
                 print(f"🛑 [Background] Attack '{attack['attack_type']}' from {attack['source_ip']} reported.")
-            except: pass
+            except:
+                pass
         
         time.sleep(30)
 
@@ -51,7 +53,8 @@ def generate_local_data(num_samples=1000):
     for i in range(len(X_raw) - TIME_STEPS):
         Xs.append(X_raw[i:(i + TIME_STEPS)])
         ys.append(y_raw[i + TIME_STEPS])
-    if not Xs: return None
+    if not Xs:
+        return None
     X_seq, y_seq = np.array(Xs), np.array(ys)
     return train_test_split(X_seq, y_seq, test_size=0.2, random_state=42)
 
@@ -113,14 +116,9 @@ def main():
     try:
         print("Creating model architecture from definition...")
         model = create_model()
-        if os.path.exists("global_model.weights.h5"):
-            print("Loading weights into model...")
-            model.load_weights("global_model.weights.h5")
-            print("✅ Model created and weights loaded successfully.")
-        else:
-            print("⚠️ No weights file found. Starting with fresh model.")
+        print("✅ Model created (weights will come from server).")
     except Exception as e:
-        print(f"❌ Failed to create/load model: {e}")
+        print(f"❌ Failed to create model: {e}")
         stop_event.set(); bg_thread.join(1)
         return
 
