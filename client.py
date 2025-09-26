@@ -3,32 +3,48 @@
 import flwr as fl
 import tensorflow as tf
 import numpy as np
-import argparse, os, configparser, requests, time, threading, random
+import argparse, os, configparser, requests, time, threading, random, socket
 from typing import Optional
 from sklearn.model_selection import train_test_split
 from model_definition import create_model 
 
 # --- Configuration Globale ---
-API_URL = "http://127.0.0.1:8000" 
+API_URL = "http://127.0.0.1:8000"
 FLOWER_SERVER_ADDRESS = "127.0.0.1:8080"
 TIME_STEPS, NUM_FEATURES, NUM_CLASSES = 20, 7, 15
-REAL_WORLD_IPS = ["8.8.8.8", "1.1.1.1", "195.8.215.68", "139.130.4.5", "202.12.27.33"]
+REAL_WORLD_IPS = [
+    "8.8.8.8", "1.1.1.1", "195.8.215.68", "139.130.4.5", "202.12.27.33"
+]
 ATTACK_TYPES = ['Backdoor','DDoS_ICMP','DDoS_TCP','MITM','Port_Scanning','Ransomware']
 
 # --- Fonctions Utilitaires ---
 def get_device_api_key(config_file: str) -> Optional[str]:
-    config = configparser.ConfigParser(); config.read(config_file)
+    config = configparser.ConfigParser()
+    config.read(config_file)
     return config.get('device', 'api_key', fallback=None)
+
+def get_local_ip() -> str:
+    """Retourne l'adresse IP locale de la machine."""
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        return "127.0.0.1"
 
 def background_tasks(api_key: str, stop_event: threading.Event):
     """Thread pour le heartbeat et la simulation d'attaques."""
+    local_ip = get_local_ip()
     while not stop_event.is_set():
         # Heartbeat
         try:
-            requests.post(f"{API_URL}/api/devices/heartbeat", json={"api_key": api_key}, timeout=5)
-            print(f"[Background] Heartbeat sent for ...{api_key[-4:]}.")
-        except:
-            pass
+            heartbeat_data = {"api_key": api_key, "ip": local_ip}
+            requests.post(f"{API_URL}/api/devices/heartbeat", json=heartbeat_data, timeout=5)
+            print(f"[Background] Heartbeat sent from IP {local_ip} for ...{api_key[-4:]}.")
+        except Exception as e:
+            print(f"[Background] Heartbeat error: {e}")
 
         # Simulation d'attaque (30% de chance)
         if random.random() > 0.7:
@@ -40,8 +56,8 @@ def background_tasks(api_key: str, stop_event: threading.Event):
             try:
                 requests.post(f"{API_URL}/api/attacks/report", json=attack, timeout=5)
                 print(f"🛑 [Background] Attack '{attack['attack_type']}' from {attack['source_ip']} reported.")
-            except:
-                pass
+            except Exception as e:
+                print(f"[Background] Attack reporting error: {e}")
         
         time.sleep(30)
 
@@ -110,6 +126,7 @@ def main():
     data = generate_local_data()
     if not data:
         print("❌ Data generation failed. Exiting.")
+        stop_event.set()
         return
     x_train, x_val, y_train, y_val = data
     
@@ -122,7 +139,7 @@ def main():
         stop_event.set(); bg_thread.join(1)
         return
 
-    # Démarrer le client Flower (qui est bloquant)
+    # Démarrer le client Flower (bloquant)
     client = CnnLstmClient(model, x_train, y_train, x_val, y_val)
     print(f"Connecting to Flower server at {FLOWER_SERVER_ADDRESS}...")
     try:
