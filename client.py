@@ -92,15 +92,21 @@ class CnnLstmClient(fl.client.NumPyClient):
             print(f"❌ Error in fit(): {e}")
             return self.model.get_weights(), 0, {}
 
-    def evaluate(self, parameters, config):
-        try:
-            self.model.set_weights(parameters)
-            self.model.compile(optimizer="adam", loss="sparse_categorical_crossentropy", metrics=["accuracy"])
-            loss, accuracy = self.model.evaluate(self.x_val, self.y_val, verbose=0)
-            return float(loss), len(self.x_val), {"accuracy": float(accuracy)}
-        except Exception as e:
-            print(f"❌ Error in evaluate(): {e}")
-            return 0.0, 0, {"accuracy": 0.0}
+    ddef evaluate(self, parameters, config):
+    try:
+        self.model.set_weights(parameters)
+        self.model.compile(
+            optimizer="adam",
+            loss="sparse_categorical_crossentropy",
+            metrics=["accuracy"]
+        )
+        loss, accuracy = self.model.evaluate(self.x_val, self.y_val, verbose=0)
+        print(f"📊 Evaluation result — Loss: {loss:.4f}, Accuracy: {accuracy:.4f}")
+        return float(loss), len(self.x_val), {"accuracy": float(accuracy)}
+    except Exception as e:
+        print(f"❌ Error in evaluate(): {e}")
+        return 0.0, 0, {"accuracy": 0.0}
+
 
 # --- Fonction Principale ---
 def main():
