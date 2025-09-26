@@ -113,9 +113,12 @@ def main():
     try:
         print("Creating model architecture from definition...")
         model = create_model()
-        print("Loading weights into model...")
-        model.load_weights('global_model.weights.h5')
-        print("✅ Model created and weights loaded successfully.")
+        if os.path.exists("global_model.weights.h5"):
+            print("Loading weights into model...")
+            model.load_weights("global_model.weights.h5")
+            print("✅ Model created and weights loaded successfully.")
+        else:
+            print("⚠️ No weights file found. Starting with fresh model.")
     except Exception as e:
         print(f"❌ Failed to create/load model: {e}")
         stop_event.set(); bg_thread.join(1)
