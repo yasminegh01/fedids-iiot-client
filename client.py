@@ -15,7 +15,7 @@ TIME_STEPS, NUM_FEATURES, NUM_CLASSES = 20, 7, 15
 REAL_WORLD_IPS = [
     "8.8.8.8", "1.1.1.1", "195.8.215.68", "139.130.4.5", "202.12.27.33"
 ]
-ATTACK_TYPES = ['Backdoor', 'DDoS_ICMP', 'DDoS_TCP', 'MITM', 'Port_Scanning', 'Ransomware']
+ATTACK_TYPES = ['Backdoor','DDoS_ICMP','DDoS_TCP','MITM','Port_Scanning','Ransomware']
 
 # --- Fonctions Utilitaires ---
 def get_device_api_key(config_file: str) -> Optional[str]:
@@ -24,7 +24,6 @@ def get_device_api_key(config_file: str) -> Optional[str]:
     return config.get('device', 'api_key', fallback=None)
 
 def get_local_ip() -> str:
-    """Retourne l'adresse IP locale de la machine."""
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(("8.8.8.8", 80))
@@ -35,7 +34,6 @@ def get_local_ip() -> str:
         return "127.0.0.1"
 
 def background_tasks(api_key: str, stop_event: threading.Event):
-    """Thread pour heartbeat et simulation d'attaques."""
     local_ip = get_local_ip()
     while not stop_event.is_set():
         try:
@@ -84,11 +82,7 @@ class CnnLstmClient(fl.client.NumPyClient):
     def fit(self, parameters, config):
         try:
             self.model.set_weights(parameters)
-            self.model.compile(
-                optimizer="adam",
-                loss="sparse_categorical_crossentropy",
-                metrics=["accuracy"]
-            )
+            self.model.compile(optimizer="adam", loss="sparse_categorical_crossentropy", metrics=["accuracy"])
             self.model.fit(self.x_train, self.y_train, epochs=2, batch_size=32, verbose=1)
             print("✅ Local training round finished.")
             return self.model.get_weights(), len(self.x_train), {}
@@ -99,18 +93,13 @@ class CnnLstmClient(fl.client.NumPyClient):
     def evaluate(self, parameters, config):
         try:
             self.model.set_weights(parameters)
-            self.model.compile(
-                optimizer="adam",
-                loss="sparse_categorical_crossentropy",
-                metrics=["accuracy"]
-            )
+            self.model.compile(optimizer="adam", loss="sparse_categorical_crossentropy", metrics=["accuracy"])
             loss, accuracy = self.model.evaluate(self.x_val, self.y_val, verbose=0)
             print(f"📊 Evaluation result — Loss: {loss:.4f}, Accuracy: {accuracy:.4f}")
             return float(loss), len(self.x_val), {"accuracy": float(accuracy)}
         except Exception as e:
             print(f"❌ Error in evaluate(): {e}")
             return 0.0, 0, {"accuracy": 0.0}
-
 
 # --- Fonction Principale ---
 def main():
@@ -159,7 +148,7 @@ def main():
     client = CnnLstmClient(model, x_train, y_train, x_val, y_val)
     print(f"Connecting to Flower server at {FLOWER_SERVER_ADDRESS}...")
     try:
-        fl.client.start_client(server_address=FLOWER_SERVER_ADDRESS, client=client)
+        fl.client.start_numpy_client(server_address=FLOWER_SERVER_ADDRESS, client=client)
     except Exception as e:
         print(f"❌ Could not connect to Flower server: {e}")
     finally:
