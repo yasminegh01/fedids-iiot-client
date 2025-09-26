@@ -6,7 +6,7 @@ import numpy as np
 import argparse, os, configparser, requests, time, threading, random, socket
 from typing import Optional
 from sklearn.model_selection import train_test_split
-from model_definition import create_model 
+from model_definition import create_model
 
 # --- Configuration Globale ---
 API_URL = "http://127.0.0.1:8000"
@@ -15,7 +15,7 @@ TIME_STEPS, NUM_FEATURES, NUM_CLASSES = 20, 7, 15
 REAL_WORLD_IPS = [
     "8.8.8.8", "1.1.1.1", "195.8.215.68", "139.130.4.5", "202.12.27.33"
 ]
-ATTACK_TYPES = ['Backdoor','DDoS_ICMP','DDoS_TCP','MITM','Port_Scanning','Ransomware']
+ATTACK_TYPES = ['Backdoor', 'DDoS_ICMP', 'DDoS_TCP', 'MITM', 'Port_Scanning', 'Ransomware']
 
 # --- Fonctions Utilitaires ---
 def get_device_api_key(config_file: str) -> Optional[str]:
@@ -35,10 +35,9 @@ def get_local_ip() -> str:
         return "127.0.0.1"
 
 def background_tasks(api_key: str, stop_event: threading.Event):
-    """Thread pour le heartbeat et la simulation d'attaques."""
+    """Thread pour heartbeat et simulation d'attaques."""
     local_ip = get_local_ip()
     while not stop_event.is_set():
-        # Heartbeat
         try:
             heartbeat_data = {"api_key": api_key, "ip": local_ip}
             requests.post(f"{API_URL}/api/devices/heartbeat", json=heartbeat_data, timeout=5)
@@ -46,7 +45,6 @@ def background_tasks(api_key: str, stop_event: threading.Event):
         except Exception as e:
             print(f"[Background] Heartbeat error: {e}")
 
-        # Simulation d'attaque (30% de chance)
         if random.random() > 0.7:
             attack = {
                 "source_ip": random.choice(REAL_WORLD_IPS),
@@ -58,7 +56,7 @@ def background_tasks(api_key: str, stop_event: threading.Event):
                 print(f"🛑 [Background] Attack '{attack['attack_type']}' from {attack['source_ip']} reported.")
             except Exception as e:
                 print(f"[Background] Attack reporting error: {e}")
-        
+
         time.sleep(30)
 
 def generate_local_data(num_samples=1000):
@@ -71,8 +69,7 @@ def generate_local_data(num_samples=1000):
         ys.append(y_raw[i + TIME_STEPS])
     if not Xs:
         return None
-    X_seq, y_seq = np.array(Xs), np.array(ys)
-    return train_test_split(X_seq, y_seq, test_size=0.2, random_state=42)
+    return train_test_split(np.array(Xs), np.array(ys), test_size=0.2, random_state=42)
 
 # --- Client Flower ---
 class CnnLstmClient(fl.client.NumPyClient):
@@ -85,17 +82,25 @@ class CnnLstmClient(fl.client.NumPyClient):
         return self.model.get_weights()
 
     def fit(self, parameters, config):
-        self.model.set_weights(parameters)
-        self.model.compile("adam", "sparse_categorical_crossentropy", metrics=["accuracy"])
-        self.model.fit(self.x_train, self.y_train, epochs=2, batch_size=32, verbose=0)
-        print("✅ Local training round finished.")
-        return self.model.get_weights(), len(self.x_train), {}
+        try:
+            self.model.set_weights(parameters)
+            self.model.compile(optimizer="adam", loss="sparse_categorical_crossentropy", metrics=["accuracy"])
+            self.model.fit(self.x_train, self.y_train, epochs=2, batch_size=32, verbose=1)
+            print("✅ Local training round finished.")
+            return self.model.get_weights(), len(self.x_train), {}
+        except Exception as e:
+            print(f"❌ Error in fit(): {e}")
+            return self.model.get_weights(), 0, {}
 
     def evaluate(self, parameters, config):
-        self.model.set_weights(parameters)
-        self.model.compile("adam", "sparse_categorical_crossentropy", metrics=["accuracy"])
-        loss, accuracy = self.model.evaluate(self.x_val, self.y_val, verbose=0)
-        return float(loss), len(self.x_val), {"accuracy": float(accuracy)}
+        try:
+            self.model.set_weights(parameters)
+            self.model.compile(optimizer="adam", loss="sparse_categorical_crossentropy", metrics=["accuracy"])
+            loss, accuracy = self.model.evaluate(self.x_val, self.y_val, verbose=0)
+            return float(loss), len(self.x_val), {"accuracy": float(accuracy)}
+        except Exception as e:
+            print(f"❌ Error in evaluate(): {e}")
+            return 0.0, 0, {"accuracy": 0.0}
 
 # --- Fonction Principale ---
 def main():
@@ -116,30 +121,31 @@ def main():
         print(f"❌ FATAL: API Key not found in '{args.config}'. Exiting.")
         return
 
-    # Démarrer le thread d'arrière-plan
     stop_event = threading.Event()
     bg_thread = threading.Thread(target=background_tasks, args=(api_key, stop_event), daemon=True)
     bg_thread.start()
     print("✅ Background tasks (heartbeat, attack simulation) started.")
 
-    # Générer les données et charger le modèle
     data = generate_local_data()
     if not data:
         print("❌ Data generation failed. Exiting.")
         stop_event.set()
         return
     x_train, x_val, y_train, y_val = data
-    
+    print(f"✅ Data generated: x_train={x_train.shape}, y_train={y_train.shape}, x_val={x_val.shape}, y_val={y_val.shape}")
+
     try:
         print("Creating model architecture from definition...")
         model = create_model()
-        print("✅ Model created (weights will come from server).")
+        model.compile(optimizer="adam", loss="sparse_categorical_crossentropy", metrics=["accuracy"])
+        print(model.summary())
+        print("✅ Model created and compiled (weights will come from server).")
     except Exception as e:
         print(f"❌ Failed to create model: {e}")
-        stop_event.set(); bg_thread.join(1)
+        stop_event.set()
+        bg_thread.join(1)
         return
 
-    # Démarrer le client Flower (bloquant)
     client = CnnLstmClient(model, x_train, y_train, x_val, y_val)
     print(f"Connecting to Flower server at {FLOWER_SERVER_ADDRESS}...")
     try:
