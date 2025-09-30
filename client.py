@@ -38,29 +38,28 @@ def get_local_ip() -> str:
 
 
 def background_tasks(api_key: str, stop_event: threading.Event):
-    """Thread pour heartbeat et simulation d'attaques."""
-    local_ip = get_local_ip()
+    """Thread pour le heartbeat et la simulation d'attaques."""
     while not stop_event.is_set():
+        # Heartbeat
         try:
-            heartbeat_data = {"api_key": api_key, "ip": local_ip}
-            requests.post(f"{API_URL}/api/devices/heartbeat", json=heartbeat_data, timeout=5)
-            print(f"[Background] Heartbeat sent from IP {local_ip} for ...{api_key[-4:]}.")
-        except Exception as e:
-            print(f"[Background] Heartbeat error: {e}")
+            # === CORRECTION : On envoie la clé API ===
+            requests.post(f"{API_URL}/api/devices/heartbeat", json={"api_key": api_key}, timeout=5)
+            print(f"[Background] Heartbeat sent for device ...{api_key[-4:]}.")
+        except: pass
 
+        # Simulation d'attaque
         if random.random() > 0.7:
             attack = {
                 "source_ip": random.choice(REAL_WORLD_IPS),
                 "attack_type": random.choice(ATTACK_TYPES),
                 "confidence": round(random.uniform(0.8, 1.0), 2),
-                "api_key": api_key
+                "api_key": api_key # <<< ON AJOUTE LA CLÉ API AU RAPPORT
             }
             try:
                 requests.post(f"{API_URL}/api/attacks/report", json=attack, timeout=5)
                 print(f"🛑 [Background] Attack '{attack['attack_type']}' from {attack['source_ip']} reported.")
-            except Exception as e:
-                print(f"[Background] Attack reporting error: {e}")
-
+            except: pass
+        
         time.sleep(30)
 
 
