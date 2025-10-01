@@ -132,14 +132,16 @@ def get_local_ip() -> str:
 def register_client_to_backend(api_key: str, flower_cid: str):
     """Annonce ce client au backend pour le lier à un utilisateur."""
     try:
+        # Le Pydantic Model FLClientRegistration attend 'api_key' et 'flower_cid'
         payload = {"api_key": api_key, "flower_cid": flower_cid}
         response = requests.post(f"{API_URL}/api/fl/register", json=payload, timeout=5)
         if response.status_code == 200:
             print(f"✅ Successfully registered client {flower_cid} with backend.")
         else:
-            print(f"⚠️  Warning: Failed to register client with backend. Status: {response.status_code}")
+            # On affiche le détail de l'erreur renvoyée par FastAPI
+            print(f"⚠️ Warning: Failed to register client. Status: {response.status_code}, Detail: {response.text}")
     except Exception as e:
-        print(f"⚠️  Warning: Could not reach backend for client registration. Error: {e}")
+        print(f"⚠️ Warning: Could not reach backend for client registration. Error: {e}")
 
 
 def background_tasks(api_key: str, stop_event: threading.Event):
