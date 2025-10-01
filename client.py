@@ -242,13 +242,13 @@ def main():
         print(f"❌ FATAL: API Key not found in '{args.config}'. Exiting.")
         return
 
-    # --- Thread d’arrière-plan ---
+    # Démarrer les tâches de fond (heartbeat + simulation d'attaque)
     stop_event = threading.Event()
     bg_thread = threading.Thread(target=background_tasks, args=(api_key, stop_event), daemon=True)
     bg_thread.start()
     print("✅ Background tasks (heartbeat, attack simulation) started.")
 
-    # --- Génération des données locales ---
+    # Générer les données locales
     data = generate_local_data()
     if not data:
         print("❌ Data generation failed. Exiting.")
@@ -257,29 +257,39 @@ def main():
     x_train, x_val, y_train, y_val = data
     print(f"✅ Data generated: x_train={x_train.shape}, y_train={y_train.shape}, x_val={x_val.shape}, y_val={y_val.shape}")
 
-    # --- Création du modèle ---
+    # Créer le modèle
     try:
         print("Creating model architecture from definition...")
         model = create_model()
         model.compile(optimizer="adam", loss="sparse_categorical_crossentropy", metrics=["accuracy"])
         print(model.summary())
-        print("✅ Model created and compiled (weights will come from server).")
+        print("✅ Model created and compiled.")
     except Exception as e:
         print(f"❌ Failed to create model: {e}")
         stop_event.set()
         bg_thread.join(1)
         return
 
-    # --- Enregistrement du client auprès du backend ---
-    client = CnnLstmClient(model, x_train, y_train, x_val, y_val)
-    temp_client_app = fl.client.ClientApp(client=client)
-    flower_cid = temp_client_app.cid
-    register_client_to_backend(api_key, flower_cid)
-
-    # --- Connexion à Flower ---
-    print(f"Connecting to Flower server at {FLOWER_SERVER_ADDRESS}...")
+    # Enregistrement auprès du backend (sans flower_cid)
     try:
-        fl.client.start_app(server_address=FLOWER_SERVER_ADDRESS, app=temp_client_app)
+        payload = {"api_key": api_key}
+        response = requests.post(f"{API_URL}/api/fl/register", json=payload, timeout=5)
+        if response.status_code == 200:
+            print(f"✅ Client registered successfully with backend.")
+        else:
+            print(f"⚠️ Failed to register client. Status: {response.status_code}")
+    except Exception as e:
+        print(f"⚠️ Could not register client with backend. Error: {e}")
+
+    # Créer le client Flower
+    client = CnnLstmClient(model, x_train, y_train, x_val, y_val)
+    print(f"Connecting to Flower server at {FLOWER_SERVER_ADDRESS}...")
+
+    try:
+        fl.client.start_numpy_client(
+            server_address=FLOWER_SERVER_ADDRESS,
+            client=client
+        )
     except Exception as e:
         print(f"❌ Could not connect to Flower server: {e}")
     finally:
