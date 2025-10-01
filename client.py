@@ -143,24 +143,44 @@ def register_client_to_backend(api_key: str, flower_cid: str):
 
 
 def background_tasks(api_key: str, stop_event: threading.Event):
-    """Thread pour heartbeat, simulation d'attaques, et actions de prévention."""
+    """Thread pour le heartbeat, la simulation d'attaques et la prévention."""
+
+    prevention_enabled = False
+    last_settings_check = 0
+
+    def check_settings():
+        """Vérifie périodiquement si la prévention est activée sur le backend."""
+        nonlocal prevention_enabled, last_settings_check
+        if time.time() - last_settings_check < 30:
+            return  # Vérifie toutes les 30 secondes
+
+        print("\n[Background] Checking for new prevention settings...")
+        last_settings_check = time.time()
+        try:
+            response = requests.get(f"{API_URL}/api/devices/{api_key}/settings", timeout=5)
+            if response.status_code == 200:
+                new_status = response.json().get("prevention_enabled", False)
+                if new_status != prevention_enabled:
+                    prevention_enabled = new_status
+                    print(f"  > ✅ Prevention Status is now: {'ENABLED' if prevention_enabled else 'DISABLED'}")
+            else:
+                print(f"⚠️ Failed to check settings. Status code: {response.status_code}")
+        except Exception as e:
+            print(f"⚠️ Error checking prevention settings: {e}")
 
     def run_prevention_action(ip_to_block, attack_type):
-        """Bloquer une IP et signaler l'action au backend."""
+        """Bloque une IP, log et reporte l'action au backend."""
         action_message = f"Blocked traffic from {ip_to_block} due to {attack_type}."
         print(f"   🔥 PREMIUM PREVENTION: {action_message}")
 
-        # 1. Écrire dans un fichier log local
+        # Écriture dans un fichier log local
         try:
             with open("firewall_rules.log", "a") as f:
                 f.write(f"[{time.ctime()}] DENY IN FROM {ip_to_block} TO any\n")
         except Exception as e:
             print(f"⚠️ Error writing firewall log: {e}")
 
-        # 2. Jouer une alarme sonore (optionnel)
-        # Exemple : playsound("alarm.mp3")
-
-        # 3. Envoyer le log au backend
+        # Reporter l'action au backend
         try:
             requests.post(f"{API_URL}/api/devices/log-prevention", json={
                 "api_key": api_key,
@@ -173,32 +193,43 @@ def background_tasks(api_key: str, stop_event: threading.Event):
             print(f"⚠️ Could not report prevention action: {e}")
 
     while not stop_event.is_set():
-        # --- Heartbeat ---
         try:
-            requests.post(f"{API_URL}/api/devices/heartbeat", json={"api_key": api_key}, timeout=5)
-            print(f"[Background] Heartbeat sent for device ...{api_key[-4:]}.")
-        except Exception as e:
-            print(f"⚠️ Heartbeat failed: {e}")
+            # 1. Vérifier les réglages
+            check_settings()
 
-        # --- Simulation d'attaque ---
-        if random.random() > 0.7:
-            attack = {
-                "source_ip": random.choice(REAL_WORLD_IPS),
-                "attack_type": random.choice(ATTACK_TYPES),
-                "confidence": round(random.uniform(0.8, 1.0), 2),
-                "api_key": api_key
-            }
+            # 2. Heartbeat
             try:
-                requests.post(f"{API_URL}/api/attacks/report", json=attack, timeout=5)
-                print(f"🛑 [Background] Attack '{attack['attack_type']}' from {attack['source_ip']} reported.")
+                requests.post(f"{API_URL}/api/devices/heartbeat", json={"api_key": api_key}, timeout=5)
+                print(f"[Background] Heartbeat sent for device ...{api_key[-4:]}.")
             except Exception as e:
-                print(f"⚠️ Failed to report attack: {e}")
+                print(f"⚠️ Heartbeat failed: {e}")
 
-            # === Chantiers 2 : Prévention ===
-            if attack["confidence"] > 0.95:
-                run_prevention_action(attack["source_ip"], attack["attack_type"])
+            # 3. Simulation d'attaque
+            if random.random() > 0.6:  # fréquence accrue pour tests
+                attack = {
+                    "source_ip": random.choice(REAL_WORLD_IPS),
+                    "attack_type": random.choice(ATTACK_TYPES),
+                    "confidence": round(random.uniform(0.96, 1.0), 2),  # forcer haute confiance
+                    "api_key": api_key
+                }
+                print(f"🛑 [Background] Attack '{attack['attack_type']}' from {attack['source_ip']} reported (Confidence: {attack['confidence']:.0%}).")
 
-        time.sleep(30)
+                try:
+                    requests.post(f"{API_URL}/api/attacks/report", json=attack, timeout=5)
+                except Exception as e:
+                    print(f"⚠️ Failed to report attack: {e}")
+
+                # 4. Déclencher prévention si activée et confiance > 0.95
+                if prevention_enabled and attack['confidence'] > 0.95:
+                    run_prevention_action(attack["source_ip"], attack["attack_type"])
+
+            # 5. Attendre avant le prochain cycle
+            time.sleep(15)
+
+        except Exception as e:
+            print(f"⚠️ Error in background task loop: {e}")
+            time.sleep(15)  # éviter boucle infinie en cas d'erreur
+
 
 
 
