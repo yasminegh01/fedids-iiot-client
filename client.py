@@ -183,66 +183,39 @@ def background_tasks(api_key: str, stop_event: threading.Event):
 
 
 # --- Génération des données locales ---
-def generate_local_data(num_samples: int = 3000) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Génère des séquences temporelles normalisées. Retourne train_test_split (x_train, x_val, y_train, y_val).
-    Utilise ATTACK_LABELS s'il est disponible dans model_definition, sinon utilise la liste interne.
-    """
-    print(f"Generating {num_samples} enhanced semi-realistic data samples...")
-
+def generate_local_data(num_samples=3000):
+    """Génère des données avec des signatures d'attaques très distinctes."""
+    print(f"Generating {num_samples} high-contrast data samples...")
+    
     signatures = {
-        'Normal': [(0, 0.0, 0.2), (1, 0.1, 0.3)],
-        'Backdoor': [(4, 0.8, 1.0), (6, 0.6, 0.9)],
-        'DDoS_TCP': [(2, 0.9, 1.0), (3, 0.8, 0.95)],
-        'DDoS_UDP': [(2, 0.85, 1.0), (3, 0.8, 0.9)],
-        'DDoS_HTTP': [(2, 0.8, 1.0), (5, 0.7, 0.9)],
-        'DDoS_ICMP': [(1, 0.8, 1.0), (2, 0.8, 1.0)],
-        'Port_Scanning': [(0, 0.7, 0.9), (1, 0.8, 1.0)],
-        'MITM': [(0, 0.9, 1.0), (3, 0.7, 0.85)],
-        'Ransomware': [(5, 0.8, 1.0), (6, 0.8, 1.0)],
-        'SQL_Injection': [(3, 0.7, 0.9), (5, 0.8, 1.0)],
-        'XSS': [(3, 0.6, 0.8), (5, 0.8, 0.9)],
-        'Fingerprinting': [(1, 0.6, 0.8), (2, 0.7, 0.9)],
-        'Password': [(5, 0.9, 1.0)],
-        'Uploading': [(6, 0.8, 1.0)],
-        'Vulnerability_scanner': [(0, 0.6, 0.8), (1, 0.7, 0.9)],
+        'Normal': (0, 0.0, 0.1), 'Backdoor': (1, 0.9, 1.0),
+        'DDoS_HTTP': (2, 0.9, 1.0), 'DDoS_ICMP': (3, 0.9, 1.0),
+        'DDoS_TCP': (4, 0.9, 1.0), 'DDoS_UDP': (5, 0.9, 1.0),
+        'Fingerprinting': (6, 0.9, 1.0), 'MITM': (0, 0.8, 0.9),
+        'Password': (1, 0.8, 0.9), 'Port_Scanning': (2, 0.8, 0.9),
+        'Ransomware': (3, 0.8, 0.9), 'SQL_Injection': (4, 0.8, 0.9),
+        'Uploading': (5, 0.8, 0.9), 'Vulnerability_scanner': (6, 0.8, 0.9),
+        'XSS': (0, 0.7, 0.8),
     }
-
+    
     X_raw, y_raw = [], []
-
-    labels = ATTACK_LABELS if 'ATTACK_LABELS' in globals() else ATTACK_TYPES
-
     for _ in range(num_samples):
-        attack_type = random.choice(labels)
-        label_index = labels.index(attack_type)
-
-        # Bruit aléatoire global pour variabilité
-        features = np.random.normal(0.2, 0.05, NUM_FEATURES)
-
-        # Ajouter signatures
-        for idx, min_val, max_val in signatures.get(attack_type, []):
+        attack_type = random.choice(ATTACK_LABELS)
+        label_index = ATTACK_LABELS.index(attack_type)
+        features = np.zeros(NUM_FEATURES)
+        if attack_type in signatures:
+            idx, min_val, max_val = signatures[attack_type]
             features[idx] = random.uniform(min_val, max_val)
-
-        # Corrélation simulée
-        correlated_idx = random.sample(range(NUM_FEATURES), 2)
-        features[correlated_idx[1]] = features[correlated_idx[0]] * random.uniform(0.8, 1.2)
-
         X_raw.append(features)
         y_raw.append(label_index)
 
-    # Normalisation
-    scaler = MinMaxScaler()
-    X_raw = scaler.fit_transform(np.array(X_raw))
-
-    # Séquences temporelles
     Xs, ys = [], []
     for i in range(len(X_raw) - TIME_STEPS):
-        Xs.append(X_raw[i:i + TIME_STEPS])
+        Xs.append(X_raw[i:(i + TIME_STEPS)])
         ys.append(y_raw[i + TIME_STEPS])
-
-    Xs = np.array(Xs)
-    ys = np.array(ys)
-
-    return train_test_split(Xs, ys, test_size=0.2, random_state=42)
+        
+    if not Xs: return None
+    return train_test_split(np.array(Xs), np.array(ys), test_size=0.2, random_state=42)
 
 
 # --- Client Flower (implémentation consolidée) ---
@@ -271,13 +244,15 @@ class CnnLstmClient(fl.client.NumPyClient):
         self.model.set_weights(parameters)
         # Utiliser des callbacks pour un meilleur entraînement
         early_stop = tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=2, restore_best_weights=True)
-        self.model.fit(
+        history = self.model.fit(
             self.x_train, self.y_train,
-            epochs=6, batch_size=32,
-            validation_split=0.1, # Utiliser une partie des données d'entraînement pour la validation
-            callbacks=[early_stop],
+            epochs=15, # Plus d'époques
+            batch_size=64, # Un batch size plus grand pour stabiliser
+            validation_split=0.1,
+            callbacks=[tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=3, restore_best_weights=True)],
             verbose=1
         )
+        print(f"✅ Local training finished. Final local accuracy: {history.history['accuracy'][-1]:.4f}")
         return self.model.get_weights(), len(self.x_train), {}
     def evaluate(self, parameters, config):
         self.model.set_weights(parameters)
@@ -288,7 +263,7 @@ class CnnLstmClient(fl.client.NumPyClient):
 
 # --- MAIN ---
 def main():
-    parser = argparse.ArgumentParser(description="FedIDS IIoT Client (combined)")
+    parser = argparse.ArgumentParser(description="FedIDS IIoT Client (Final)")
     parser.add_argument("--client-id", type=int, required=True)
     parser.add_argument("--config", type=str, default="config.ini")
     parser.add_argument("--server-ip", type=str, default="127.0.0.1")
@@ -311,19 +286,24 @@ def main():
     bg_thread.start()
     print("✅ Background tasks (heartbeat, attack simulation) started.")
 
-    # Génération des données locales
+    # Génération des données
     data = generate_local_data()
+    if not data:
+        print("❌ Data generation failed. Exiting.")
+        stop_event.set(); bg_thread.join(1)
+        return
+    print(f"✅ Data generated: x_train={data[0].shape}, y_train={data[2].shape}")
 
-    # Création du modèle
+    # Création du modèle (sans charger de poids, le serveur les enverra)
     model = create_model()
     print(model.summary())
 
     # Création du client Flower
     client = CnnLstmClient(model, api_key, data)
-
+    
     print(f"Connecting to Flower server at {FLOWER_SERVER_ADDRESS}...")
     try:
-        # Lancement du client Flower (get_parameters() s'occupera de l'enregistrement avec flower_cid)
+        # La nouvelle façon recommandée d'appeler le client
         fl.client.start_client(server_address=FLOWER_SERVER_ADDRESS, client=client.to_client())
     except Exception as e:
         print(f"❌ Could not connect to Flower server: {e}")
@@ -332,3 +312,7 @@ def main():
         stop_event.set()
         bg_thread.join(2)
         print("✅ Client shutdown complete.")
+
+if __name__ == '__main__':
+    os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+    main()
