@@ -280,7 +280,6 @@ class CnnLstmClient(fl.client.NumPyClient):
             verbose=1
         )
         return self.model.get_weights(), len(self.x_train), {}
-
     def evaluate(self, parameters, config):
         self.model.set_weights(parameters)
         loss, accuracy = self.model.evaluate(self.x_val, self.y_val, verbose=0)
