@@ -1,5 +1,4 @@
-
-
+#\iiot_client\client.py
 import os
 import random
 import time
@@ -35,7 +34,7 @@ except Exception:
 # --- CONFIGURATION GLOBALE ---
 TIME_STEPS, NUM_FEATURES = 20, 7
 # API/Flower seront définis au runtime via les arguments
-API_URL = "http://127.0.0.1:8000"
+API_URL = "http://192.168.1.67:8000"
 FLOWER_SERVER_ADDRESS = "127.0.0.1:8080"
 
 # Liste d'IPs (fusion des deux listes pour couvrir plus de cas)
