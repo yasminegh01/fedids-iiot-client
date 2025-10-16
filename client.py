@@ -1,16 +1,4 @@
-"""
-FedIDS IIoT Client - Fichier combiné
------------------------------------
-Version combinée et nettoyée des deux fichiers fournis par l'utilisateur.
-Ce client gère :
- - génération de données locales simulées
- - entraînement local CNN+LSTM
- - communication avec le backend (enregistrement, heartbeat, report d'attaques)
- - tâches de fond (heartbeat, simulation d'attaques, prévention)
 
-Auteur : Yasmine Gheribi (fusion des deux versions)
-Date : 2025
-"""
 
 import os
 import random
@@ -260,30 +248,37 @@ def generate_local_data(num_samples: int = 3000) -> Tuple[np.ndarray, np.ndarray
 
 # --- Client Flower (implémentation consolidée) ---
 class CnnLstmClient(fl.client.NumPyClient):
-    def __init__(self, model: tf.keras.Model, x_train: np.ndarray, y_train: np.ndarray, x_val: np.ndarray, y_val: np.ndarray):
+    def __init__(self, model, api_key, data):
         self.model = model
-        self.x_train, self.y_train = x_train, y_train
-        self.x_val, self.y_val = x_val, y_val
+        self.api_key = api_key
+        self.x_train, self.x_val, self.y_train, self.y_val = data
+        self.is_registered = False
 
     def get_parameters(self, config):
+        # === CORRECTION DU BUG 422 ===
+        # C'est le premier endroit où nous avons accès au `cid` du client.
+        # On en profite pour s'enregistrer auprès du backend.
+        if not self.is_registered and hasattr(self, 'cid'):
+            try:
+                payload = {"api_key": self.api_key, "flower_cid": self.cid}
+                requests.post(f"{API_URL}/api/fl/register", json=payload, timeout=5)
+                print(f"✅ Successfully registered client {self.cid} with backend.")
+                self.is_registered = True
+            except Exception as e:
+                print(f"⚠️ Could not register client with backend. Error: {e}")
         return self.model.get_weights()
 
     def fit(self, parameters, config):
         self.model.set_weights(parameters)
-        optimizer = tf.keras.optimizers.Adam(learning_rate=1e-4)
-        self.model.compile(optimizer=optimizer, loss='sparse_categorical_crossentropy', metrics=['accuracy'])
-
-        early_stop = tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=3, restore_best_weights=True)
-
+        # Utiliser des callbacks pour un meilleur entraînement
+        early_stop = tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=2, restore_best_weights=True)
         self.model.fit(
             self.x_train, self.y_train,
             epochs=6, batch_size=32,
-            validation_split=0.1,
+            validation_split=0.1, # Utiliser une partie des données d'entraînement pour la validation
             callbacks=[early_stop],
             verbose=1
         )
-
-        print("✅ Local training round finished.")
         return self.model.get_weights(), len(self.x_train), {}
 
     def evaluate(self, parameters, config):
@@ -320,8 +315,9 @@ def main():
     print("✅ Background tasks (heartbeat, attack simulation) started.")
 
     # Génération données
-    x_train, x_val, y_train, y_val = generate_local_data()
-    print(f"✅ Data: x_train={x_train.shape}, y_train={y_train.shape}, x_val={x_val.shape}, y_val={y_val.shape}")
+    #x_train, x_val, y_train, y_val = generate_local_data()
+    data = generate_local_data()
+    #print(f"✅ Data: x_train={x_train.shape}, y_train={y_train.shape}, x_val={x_val.shape}, y_val={y_val.shape}")
 
     # Création du modèle
     model = create_model()
@@ -331,13 +327,15 @@ def main():
     register_client_to_backend(api_key)
 
     # Création client Flower
-    client = CnnLstmClient(model, x_train, y_train, x_val, y_val)
-    print(f"Connecting to Flower server at {FLOWER_SERVER_ADDRESS}...")
+    client = CnnLstmClient(model, api_key, data)
 
+    print(f"Connecting to Flower server at {FLOWER_SERVER_ADDRESS}...")
     try:
-        fl.client.start_numpy_client(server_address=FLOWER_SERVER_ADDRESS, client=client)
+        # La nouvelle façon recommandée d'appeler le client
+        fl.client.start_client(server_address=FLOWER_SERVER_ADDRESS, client=client.to_client())
     except Exception as e:
         print(f"❌ Could not connect to Flower server: {e}")
+    
     finally:
         print("Shutting down background tasks...")
         stop_event.set()
