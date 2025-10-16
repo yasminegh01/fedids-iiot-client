@@ -287,7 +287,6 @@ class CnnLstmClient(fl.client.NumPyClient):
 
 
 # --- MAIN ---
-
 def main():
     parser = argparse.ArgumentParser(description="FedIDS IIoT Client (combined)")
     parser.add_argument("--client-id", type=int, required=True)
@@ -306,41 +305,30 @@ def main():
         print(f"❌ FATAL: API Key not found in '{args.config}'. Exiting.")
         return
 
-    # Démarrer tâches de fond
+    # Démarrer les tâches de fond
     stop_event = threading.Event()
     bg_thread = threading.Thread(target=background_tasks, args=(api_key, stop_event), daemon=True)
     bg_thread.start()
     print("✅ Background tasks (heartbeat, attack simulation) started.")
 
-    # Génération données
-    #x_train, x_val, y_train, y_val = generate_local_data()
+    # Génération des données locales
     data = generate_local_data()
-    #print(f"✅ Data: x_train={x_train.shape}, y_train={y_train.shape}, x_val={x_val.shape}, y_val={y_val.shape}")
 
     # Création du modèle
     model = create_model()
     print(model.summary())
 
-    # Enregistrement auprès du backend
-    register_client_to_backend(api_key)
-
-    # Création client Flower
+    # Création du client Flower
     client = CnnLstmClient(model, api_key, data)
 
     print(f"Connecting to Flower server at {FLOWER_SERVER_ADDRESS}...")
     try:
-        # La nouvelle façon recommandée d'appeler le client
+        # Lancement du client Flower (get_parameters() s'occupera de l'enregistrement avec flower_cid)
         fl.client.start_client(server_address=FLOWER_SERVER_ADDRESS, client=client.to_client())
     except Exception as e:
         print(f"❌ Could not connect to Flower server: {e}")
-    
     finally:
         print("Shutting down background tasks...")
         stop_event.set()
         bg_thread.join(2)
         print("✅ Client shutdown complete.")
-
-
-if __name__ == '__main__':
-    os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
-    main()
