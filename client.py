@@ -1,15 +1,40 @@
-import os, random, time, requests, numpy as np, threading, argparse, socket, configparser
-from typing import Optional
+#\iiot_client\client.py
+import os
+import random
+import time
+import requests
+import numpy as np
+import threading
+import argparse
+import socket
+from typing import Optional, Tuple
+
+# ML imports
 import tensorflow as tf
 from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import MinMaxScaler
 import flwr as fl
 
-# On importe TOUT depuis la source de vérité
-from model_definition import create_model, ATTACK_LABELS, NUM_CLASSES, TIME_STEPS, NUM_FEATURES
+# Import du modèle (essayer d'importer ATTACK_LABELS/NUM_CLASSES si présents)
+try:
+    from model_definition import create_model, ATTACK_LABELS, NUM_CLASSES
+except Exception:
+    try:
+        from model_definition import create_model
+    except Exception:
+        raise
+    # fallback si ATTACK_LABELS non fourni
+    ATTACK_LABELS = [
+        'Normal', 'Backdoor', 'DDoS_ICMP', 'DDoS_TCP', 'DDoS_UDP', 'Password',
+        'Port_Scanning', 'Ransomware', 'SQL_Injection', 'Spyware', 'Trojan',
+        'Uploading', 'Vulnerability_Scan', 'XSS', 'MITM'
+    ]
+    NUM_CLASSES = len(ATTACK_LABELS)
 
 # --- CONFIGURATION GLOBALE ---
+TIME_STEPS, NUM_FEATURES = 20, 7
 # API/Flower seront définis au runtime via les arguments
-API_URL = "http://127.0.0.1:8000"
+API_URL = "http://192.168.1.67:8000"
 FLOWER_SERVER_ADDRESS = "127.0.0.1:8080"
 
 # Liste d'IPs (fusion des deux listes pour couvrir plus de cas)
@@ -159,20 +184,39 @@ def background_tasks(api_key: str, stop_event: threading.Event):
 
 # --- Génération des données locales ---
 def generate_local_data(num_samples=3000):
-    """Génère des données compatibles avec le modèle."""
-    print(f"Generating {num_samples} data samples...")
-    # On utilise les constantes globales importées
-    X = np.random.rand(num_samples, NUM_FEATURES).astype(np.float32)
-    y = np.random.randint(0, NUM_CLASSES, num_samples)
+    """Génère des données avec des signatures d'attaques très distinctes."""
+    print(f"Generating {num_samples} high-contrast data samples...")
     
-    # Créer les séquences temporelles
+    signatures = {
+        'Normal': (0, 0.0, 0.1), 'Backdoor': (1, 0.9, 1.0),
+        'DDoS_HTTP': (2, 0.9, 1.0), 'DDoS_ICMP': (3, 0.9, 1.0),
+        'DDoS_TCP': (4, 0.9, 1.0), 'DDoS_UDP': (5, 0.9, 1.0),
+        'Fingerprinting': (6, 0.9, 1.0), 'MITM': (0, 0.8, 0.9),
+        'Password': (1, 0.8, 0.9), 'Port_Scanning': (2, 0.8, 0.9),
+        'Ransomware': (3, 0.8, 0.9), 'SQL_Injection': (4, 0.8, 0.9),
+        'Uploading': (5, 0.8, 0.9), 'Vulnerability_scanner': (6, 0.8, 0.9),
+        'XSS': (0, 0.7, 0.8),
+    }
+    
+    X_raw, y_raw = [], []
+    for _ in range(num_samples):
+        attack_type = random.choice(ATTACK_LABELS)
+        label_index = ATTACK_LABELS.index(attack_type)
+        features = np.zeros(NUM_FEATURES)
+        if attack_type in signatures:
+            idx, min_val, max_val = signatures[attack_type]
+            features[idx] = random.uniform(min_val, max_val)
+        X_raw.append(features)
+        y_raw.append(label_index)
+
     Xs, ys = [], []
-    for i in range(len(X) - TIME_STEPS):
-        Xs.append(X[i:(i + TIME_STEPS)])
-        ys.append(y[i + TIME_STEPS])
+    for i in range(len(X_raw) - TIME_STEPS):
+        Xs.append(X_raw[i:(i + TIME_STEPS)])
+        ys.append(y_raw[i + TIME_STEPS])
         
     if not Xs: return None
     return train_test_split(np.array(Xs), np.array(ys), test_size=0.2, random_state=42)
+
 
 # --- Client Flower (implémentation consolidée) ---
 class CnnLstmClient(fl.client.NumPyClient):
@@ -183,6 +227,9 @@ class CnnLstmClient(fl.client.NumPyClient):
         self.is_registered = False
 
     def get_parameters(self, config):
+        # === CORRECTION DU BUG 422 ===
+        # C'est le premier endroit où nous avons accès au `cid` du client.
+        # On en profite pour s'enregistrer auprès du backend.
         if not self.is_registered and hasattr(self, 'cid'):
             try:
                 payload = {"api_key": self.api_key, "flower_cid": self.cid}
@@ -195,16 +242,18 @@ class CnnLstmClient(fl.client.NumPyClient):
 
     def fit(self, parameters, config):
         self.model.set_weights(parameters)
+        # Utiliser des callbacks pour un meilleur entraînement
+        early_stop = tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=2, restore_best_weights=True)
         history = self.model.fit(
             self.x_train, self.y_train,
-            epochs=15, batch_size=64,
+            epochs=15, # Plus d'époques
+            batch_size=64, # Un batch size plus grand pour stabiliser
             validation_split=0.1,
             callbacks=[tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=3, restore_best_weights=True)],
             verbose=1
         )
         print(f"✅ Local training finished. Final local accuracy: {history.history['accuracy'][-1]:.4f}")
         return self.model.get_weights(), len(self.x_train), {}
-
     def evaluate(self, parameters, config):
         self.model.set_weights(parameters)
         loss, accuracy = self.model.evaluate(self.x_val, self.y_val, verbose=0)
@@ -230,7 +279,7 @@ def main():
     if not api_key:
         print(f"❌ FATAL: API Key not found in '{args.config}'. Exiting.")
         return
-  
+
     # Démarrer les tâches de fond
     stop_event = threading.Event()
     bg_thread = threading.Thread(target=background_tasks, args=(api_key, stop_event), daemon=True)
@@ -246,19 +295,8 @@ def main():
     print(f"✅ Data generated: x_train={data[0].shape}, y_train={data[2].shape}")
 
     # Création du modèle (sans charger de poids, le serveur les enverra)
-    try:
-        print("Creating model architecture from definition...")
-        model = create_model()
-        
-        # === LA LIGNE MANQUANTE EST ICI ===
-        print("Loading initial weights from 'global_model.weights.h5'...")
-        model.load_weights('global_model.weights.h5')
-        # === FIN DE LA CORRECTION ===
-
-        print("✅ Model created and initial weights loaded successfully.")
-        print(model.summary())
-    except Exception as e:
-        print(f"❌ Failed to create/load model: {e}")
+    model = create_model()
+    print(model.summary())
 
     # Création du client Flower
     client = CnnLstmClient(model, api_key, data)
