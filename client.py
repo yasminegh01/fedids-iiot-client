@@ -202,7 +202,7 @@ def generate_local_data(num_samples=3000):
     for _ in range(num_samples):
         attack_type = random.choice(ATTACK_LABELS)
         label_index = ATTACK_LABELS.index(attack_type)
-        features = np.zeros(NUM_FEATURES)
+        features = np.zeros(NUM_FEATURES) # Bruit de fond nul pour des signatures claires
         if attack_type in signatures:
             idx, min_val, max_val = signatures[attack_type]
             features[idx] = random.uniform(min_val, max_val)
@@ -216,6 +216,8 @@ def generate_local_data(num_samples=3000):
         
     if not Xs: return None
     return train_test_split(np.array(Xs), np.array(ys), test_size=0.2, random_state=42)
+
+
 
 
 # --- Client Flower (implémentation consolidée) ---
