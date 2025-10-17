@@ -186,7 +186,6 @@ def background_tasks(api_key: str, stop_event: threading.Event):
 def generate_local_data(num_samples=3000):
     """Génère des données avec des signatures d'attaques très distinctes."""
     print(f"Generating {num_samples} high-contrast data samples...")
-    
     signatures = {
         'Normal': (0, 0.0, 0.1), 'Backdoor': (1, 0.9, 1.0),
         'DDoS_HTTP': (2, 0.9, 1.0), 'DDoS_ICMP': (3, 0.9, 1.0),
@@ -197,8 +196,8 @@ def generate_local_data(num_samples=3000):
         'Uploading': (5, 0.8, 0.9), 'Vulnerability_scanner': (6, 0.8, 0.9),
         'XSS': (0, 0.7, 0.8),
     }
-    
     X_raw, y_raw = [], []
+    
     for _ in range(num_samples):
         attack_type = random.choice(ATTACK_LABELS)
         label_index = ATTACK_LABELS.index(attack_type)
@@ -208,12 +207,10 @@ def generate_local_data(num_samples=3000):
             features[idx] = random.uniform(min_val, max_val)
         X_raw.append(features)
         y_raw.append(label_index)
-
     Xs, ys = [], []
     for i in range(len(X_raw) - TIME_STEPS):
         Xs.append(X_raw[i:(i + TIME_STEPS)])
         ys.append(y_raw[i + TIME_STEPS])
-        
     if not Xs: return None
     return train_test_split(np.array(Xs), np.array(ys), test_size=0.2, random_state=42)
 
@@ -227,9 +224,6 @@ class CnnLstmClient(fl.client.NumPyClient):
         self.is_registered = False
 
     def get_parameters(self, config):
-        # === CORRECTION DU BUG 422 ===
-        # C'est le premier endroit où nous avons accès au `cid` du client.
-        # On en profite pour s'enregistrer auprès du backend.
         if not self.is_registered and hasattr(self, 'cid'):
             try:
                 payload = {"api_key": self.api_key, "flower_cid": self.cid}
@@ -242,18 +236,16 @@ class CnnLstmClient(fl.client.NumPyClient):
 
     def fit(self, parameters, config):
         self.model.set_weights(parameters)
-        # Utiliser des callbacks pour un meilleur entraînement
-        early_stop = tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=2, restore_best_weights=True)
         history = self.model.fit(
             self.x_train, self.y_train,
-            epochs=15, # Plus d'époques
-            batch_size=64, # Un batch size plus grand pour stabiliser
+            epochs=15, batch_size=64,
             validation_split=0.1,
             callbacks=[tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=3, restore_best_weights=True)],
             verbose=1
         )
         print(f"✅ Local training finished. Final local accuracy: {history.history['accuracy'][-1]:.4f}")
         return self.model.get_weights(), len(self.x_train), {}
+
     def evaluate(self, parameters, config):
         self.model.set_weights(parameters)
         loss, accuracy = self.model.evaluate(self.x_val, self.y_val, verbose=0)
@@ -279,7 +271,7 @@ def main():
     if not api_key:
         print(f"❌ FATAL: API Key not found in '{args.config}'. Exiting.")
         return
-
+  
     # Démarrer les tâches de fond
     stop_event = threading.Event()
     bg_thread = threading.Thread(target=background_tasks, args=(api_key, stop_event), daemon=True)
