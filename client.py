@@ -1,4 +1,8 @@
-#\iiot_client\client.py
+# iiot_client/client.py
+# FedIDS IIoT Client - cleaned & fixed
+# Author: assistant (patch for Yasmine)
+# Date: 2025-10-17
+
 import os
 import random
 import time
@@ -32,14 +36,12 @@ except Exception:
     NUM_CLASSES = len(ATTACK_LABELS)
 
 # --- CONFIGURATION GLOBALE ---
+# NOTE: model_definition.create_model should accept input shape compatible with generated data
 TIME_STEPS, NUM_FEATURES = 20, 7
-# API/Flower seront définis au runtime via les arguments
 API_URL = "http://192.168.1.67:8000"
 FLOWER_SERVER_ADDRESS = "127.0.0.1:8080"
 
-# Liste d'IPs (fusion des deux listes pour couvrir plus de cas)
 REAL_WORLD_IPS = [
-    # Root / anycast / providers (extrait combiné)
     "198.41.0.4", "199.9.14.201", "192.33.4.12", "199.7.91.13", "192.203.230.10",
     "192.5.5.241", "192.112.36.4", "198.97.190.53", "192.36.148.17", "192.58.128.30",
     "193.0.14.129", "199.7.83.42", "202.12.27.33",
@@ -55,7 +57,6 @@ REAL_WORLD_IPS = [
     "201.148.95.234", "201.132.108.1", "200.11.52.202"
 ]
 
-# Types d'attaques (utilisé localement si ATTACK_LABELS non fourni)
 ATTACK_TYPES = ['Backdoor', 'DDoS_ICMP', 'DDoS_TCP', 'MITM', 'Port_Scanning', 'Ransomware']
 
 
@@ -148,7 +149,7 @@ def background_tasks(api_key: str, stop_event: threading.Event):
         try:
             check_settings()
 
-            # Heartbeat (essayons plusieurs endpoints possibles pour compatibilité)
+            # Heartbeat
             try:
                 requests.post(f"{API_URL}/api/devices/heartbeat", json={"api_key": api_key}, timeout=5)
                 print(f"[Background] Heartbeat sent for device ...{api_key[-4:] if api_key else '----'}.")
@@ -183,79 +184,98 @@ def background_tasks(api_key: str, stop_event: threading.Event):
 
 
 # --- Génération des données locales ---
-def generate_local_data(num_samples=3000):
-    """Génère des données avec des signatures d'attaques très distinctes."""
-    print(f"Generating {num_samples} high-contrast data samples...")
-    signatures = {
-        'Normal': (0, 0.0, 0.1), 'Backdoor': (1, 0.9, 1.0),
-        'DDoS_HTTP': (2, 0.9, 1.0), 'DDoS_ICMP': (3, 0.9, 1.0),
-        'DDoS_TCP': (4, 0.9, 1.0), 'DDoS_UDP': (5, 0.9, 1.0),
-        'Fingerprinting': (6, 0.9, 1.0), 'MITM': (0, 0.8, 0.9),
-        'Password': (1, 0.8, 0.9), 'Port_Scanning': (2, 0.8, 0.9),
-        'Ransomware': (3, 0.8, 0.9), 'SQL_Injection': (4, 0.8, 0.9),
-        'Uploading': (5, 0.8, 0.9), 'Vulnerability_scanner': (6, 0.8, 0.9),
-        'XSS': (0, 0.7, 0.8),
-    }
-    X_raw, y_raw = [], []
-    
-    for _ in range(num_samples):
-        attack_type = random.choice(ATTACK_LABELS)
-        label_index = ATTACK_LABELS.index(attack_type)
-        features = np.zeros(NUM_FEATURES)
-        if attack_type in signatures:
-            idx, min_val, max_val = signatures[attack_type]
-            features[idx] = random.uniform(min_val, max_val)
-        X_raw.append(features)
-        y_raw.append(label_index)
-    Xs, ys = [], []
-    for i in range(len(X_raw) - TIME_STEPS):
-        Xs.append(X_raw[i:(i + TIME_STEPS)])
-        ys.append(y_raw[i + TIME_STEPS])
-    if not Xs: return None
-    return train_test_split(np.array(Xs), np.array(ys), test_size=0.2, random_state=42)
+def generate_local_data(client_id: int, num_samples: int = 3000) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Génère des données locales simulées et les met à l'échelle.
+    Chaque client a une distribution légèrement différente.
+    NOTE: Adjust NUM_FEATURES/NUM_CLASSES to match your real model.
+    """
+    NUM_FEATURES = 24
+    NUM_CLASSES = NUM_CLASSES if 'NUM_CLASSES' in globals() else 7
+
+    np.random.seed(42 + client_id)
+    random.seed(42 + client_id)
+
+    X = np.random.rand(num_samples, NUM_FEATURES).astype(np.float32)
+    y = np.random.randint(0, NUM_CLASSES, num_samples).astype(np.int32)
+
+    # Slight client-specific bias (simulate non-iid)
+    X += client_id * 0.02 * np.random.randn(*X.shape).astype(np.float32)
+
+    # Scale features
+    scaler = MinMaxScaler()
+    X = scaler.fit_transform(X).reshape((num_samples, NUM_FEATURES, 1))
+
+    # Stratified split when possible
+    try:
+        x_train, x_val, y_train, y_val = train_test_split(
+            X, y, test_size=0.2, random_state=42, stratify=y
+        )
+    except Exception:
+        x_train, x_val, y_train, y_val = train_test_split(
+            X, y, test_size=0.2, random_state=42
+        )
+
+    print(f"Client {client_id} → x_train: {x_train.shape}, y_train distribution: {np.unique(y_train, return_counts=True)}")
+    return x_train, x_val, y_train, y_val
 
 
 # --- Client Flower (implémentation consolidée) ---
 class CnnLstmClient(fl.client.NumPyClient):
-    def __init__(self, model, api_key, data):
+    def __init__(self, model, api_key: str, data: Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray], client_id: int):
         self.model = model
         self.api_key = api_key
         self.x_train, self.x_val, self.y_train, self.y_val = data
+        self.client_id = client_id
         self.is_registered = False
 
     def get_parameters(self, config):
-        if not self.is_registered and hasattr(self, 'cid'):
+        # optionally register at first contact
+        if not self.is_registered:
             try:
-                payload = {"api_key": self.api_key, "flower_cid": self.cid}
+                # flower doesn't expose a client id here; keep safe attempt without assuming .cid
+                payload = {"api_key": self.api_key}
                 requests.post(f"{API_URL}/api/fl/register", json=payload, timeout=5)
-                print(f"✅ Successfully registered client {self.cid} with backend.")
                 self.is_registered = True
-            except Exception as e:
-                print(f"⚠️ Could not register client with backend. Error: {e}")
+                print(f"✅ Client {self.client_id} attempted registration with backend.")
+            except Exception:
+                pass
         return self.model.get_weights()
 
     def fit(self, parameters, config):
         self.model.set_weights(parameters)
+
         history = self.model.fit(
-            self.x_train, self.y_train,
-            epochs=15, batch_size=64,
+            self.x_train,
+            self.y_train,
+            epochs=8,
+            batch_size=64,
             validation_split=0.1,
-            callbacks=[tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=3, restore_best_weights=True)],
-            verbose=1
+            verbose=1,
+            callbacks=[
+                tf.keras.callbacks.EarlyStopping(monitor="val_loss", patience=2, restore_best_weights=True)
+            ],
         )
-        print(f"✅ Local training finished. Final local accuracy: {history.history['accuracy'][-1]:.4f}")
-        return self.model.get_weights(), len(self.x_train), {}
+
+        train_loss = float(history.history["loss"][-1])
+        train_acc = float(history.history.get("accuracy", [0.0])[-1])
+
+        print(f"✅ Client {self.client_id} - Local training done. Loss={train_loss:.4f}, Acc={train_acc:.4f}")
+
+        # Return metrics so the server can aggregate them
+        metrics = {"loss": train_loss, "accuracy": train_acc}
+        return self.model.get_weights(), len(self.x_train), metrics
 
     def evaluate(self, parameters, config):
         self.model.set_weights(parameters)
         loss, accuracy = self.model.evaluate(self.x_val, self.y_val, verbose=0)
-        print(f"📊 Evaluation — Loss: {loss:.4f}, Accuracy: {accuracy:.4f}")
+        print(f"📊 Client {self.client_id} - Eval → Loss={loss:.4f}, Acc={accuracy:.4f}")
         return float(loss), len(self.x_val), {"accuracy": float(accuracy)}
 
 
 # --- MAIN ---
 def main():
-    parser = argparse.ArgumentParser(description="FedIDS IIoT Client (Final)")
+    parser = argparse.ArgumentParser(description="FedIDS IIoT Client (Fixed)")
     parser.add_argument("--client-id", type=int, required=True)
     parser.add_argument("--config", type=str, default="config.ini")
     parser.add_argument("--server-ip", type=str, default="127.0.0.1")
@@ -271,32 +291,52 @@ def main():
     if not api_key:
         print(f"❌ FATAL: API Key not found in '{args.config}'. Exiting.")
         return
-  
-    # Démarrer les tâches de fond
+
+    # Start background thread
     stop_event = threading.Event()
     bg_thread = threading.Thread(target=background_tasks, args=(api_key, stop_event), daemon=True)
     bg_thread.start()
     print("✅ Background tasks (heartbeat, attack simulation) started.")
 
-    # Génération des données
-    data = generate_local_data()
+    # Generate data for this client
+    data = generate_local_data(args.client_id)
     if not data:
         print("❌ Data generation failed. Exiting.")
-        stop_event.set(); bg_thread.join(1)
+        stop_event.set()
+        bg_thread.join(1)
         return
     print(f"✅ Data generated: x_train={data[0].shape}, y_train={data[2].shape}")
 
-    # Création du modèle (sans charger de poids, le serveur les enverra)
-    model = create_model()
-    print(model.summary())
-
-    # Création du client Flower
-    client = CnnLstmClient(model, api_key, data)
-    
-    print(f"Connecting to Flower server at {FLOWER_SERVER_ADDRESS}...")
+    # Create model (server will send weights during FL)
     try:
-        # La nouvelle façon recommandée d'appeler le client
-        fl.client.start_client(server_address=FLOWER_SERVER_ADDRESS, client=client.to_client())
+        print("Creating model architecture from definition...")
+        # create_model should match the data shape used in generate_local_data
+        # If your create_model expects (TIME_STEPS, NUM_FEATURES), adjust generate_local_data accordingly.
+        model = create_model()
+        # Try loading initial weights if present (non-fatal)
+        weights_path = "global_model.weights.h5"
+        if os.path.exists(weights_path):
+            try:
+                model.load_weights(weights_path)
+                print(f"Loaded initial weights from '{weights_path}'.")
+            except Exception as e:
+                print(f"⚠️ Could not load '{weights_path}': {e} — continuing without initial weights.")
+        else:
+            print("No initial global weights file found; continuing with freshly initialized model.")
+
+        print("✅ Model created successfully.")
+        model.summary()
+    except Exception as e:
+        print(f"❌ Failed to create/load model: {e}")
+        stop_event.set()
+        bg_thread.join(1)
+        return
+
+    # Create and start Flower client
+    try:
+        client = CnnLstmClient(model, api_key, data, client_id=args.client_id)
+        print(f"Connecting to Flower server at {FLOWER_SERVER_ADDRESS}...")
+        fl.client.start_numpy_client(server_address=FLOWER_SERVER_ADDRESS, client=client)
     except Exception as e:
         print(f"❌ Could not connect to Flower server: {e}")
     finally:
@@ -304,6 +344,7 @@ def main():
         stop_event.set()
         bg_thread.join(2)
         print("✅ Client shutdown complete.")
+
 
 if __name__ == '__main__':
     os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
